@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RFID // FORGE</title>
+<style>
+  /* Zadne externi fonty/CDN - zarizeni bezi jako izolovany hotspot bez internetu */
+  :root{
+    --bg: #060a08;
+    --panel: #0c1512;
+    --panel-2: #0f1a16;
+    --line: #16302a;
+    --green: #39ff9d;
+    --green-dim: #1c8a5c;
+    --cyan: #4de3ff;
+    --red: #ff4d6d;
+    --amber: #ffb84d;
+    --text: #c9f7e3;
+    --text-dim: #6a988a;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:
+      repeating-linear-gradient(0deg, rgba(57,255,157,0.035) 0px, rgba(57,255,157,0.035) 1px, transparent 1px, transparent 3px),
+      radial-gradient(ellipse at top, #0b1712 0%, #060a08 65%);
+    color:var(--text);
+    font-family: 'Consolas', 'SFMono-Regular', 'Courier New', monospace;
+    font-size:14px;
+  }
+  .wrap{ max-width:960px; margin:0 auto; padding:18px 16px 60px; }
+
+  header{ text-align:center; margin-bottom:18px; }
+  header h1{
+    font-size:2.1em; letter-spacing:6px; margin:0;
+    color:var(--green);
+    text-shadow: 0 0 6px rgba(57,255,157,0.7), 0 0 18px rgba(57,255,157,0.35);
+  }
+  header .sub{ color:var(--text-dim); letter-spacing:2px; font-size:0.85em; margin-top:4px;}
+  header .sub .accent{ color:var(--cyan); }
+
+  .statusbar{
+    display:flex; justify-content:center; align-items:center; gap:8px;
+    margin:10px 0 22px; font-size:0.85em; letter-spacing:1px;
+  }
+  .dot{ width:9px; height:9px; border-radius:50%; background:var(--red); box-shadow:0 0 6px var(--red);}
+  .dot.on{ background:var(--green); box-shadow:0 0 8px var(--green);}
+
+  .panel{
+    background:linear-gradient(180deg, var(--panel), var(--panel-2));
+    border:1px solid var(--line);
+    border-radius:6px;
+    padding:16px;
+    margin-bottom:18px;
+    position:relative;
+  }
+  .panel::before{
+    content:attr(data-tag);
+    position:absolute; top:-9px; left:14px;
+    background:var(--bg);
+    padding:0 8px;
+    color:var(--cyan);
+    font-size:0.72em;
+    letter-spacing:3px;
+  }
+
+  .btnrow{ display:flex; flex-wrap:wrap; gap:10px; }
+  button{
+    font-family:inherit; font-size:0.85em; letter-spacing:1px;
+    background:transparent;
+    color:var(--green);
+    border:1px solid var(--green-dim);
+    padding:10px 16px;
+    border-radius:4px;
+    cursor:pointer;
+    transition:0.15s;
+  }
+  button:hover{ background:rgba(57,255,157,0.1); border-color:var(--green); box-shadow:0 0 10px rgba(57,255,157,0.25);}
+  button:active{ transform:translateY(1px); }
+  button.danger{ color:var(--red); border-color:#7a2334; }
+  button.danger:hover{ background:rgba(255,77,109,0.1); border-color:var(--red); box-shadow:0 0 10px rgba(255,77,109,0.25);}
+  button.ghost{ color:var(--text-dim); border-color:var(--line); }
+  button:disabled{ opacity:0.35; cursor:not-allowed; }
+
+  label.check{ display:flex; align-items:center; gap:8px; color:var(--amber); font-size:0.85em; margin-top:10px;}
+
+  .terminal{
+    background:#040807;
+    border:1px solid var(--line);
+    border-radius:4px;
+    height:180px;
+    overflow-y:auto;
+    padding:10px 12px;
+    font-size:0.82em;
+    line-height:1.5em;
+  }
+  .terminal .line{ white-space:pre-wrap; word-break:break-word; }
+  .terminal .t-status{ color:var(--text); }
+  .terminal .t-error{ color:var(--red); }
+  .terminal .t-ok{ color:var(--green); }
+  .terminal .t-info{ color:var(--cyan); }
+  .terminal .ts{ color:var(--text-dim); margin-right:6px;}
+
+  .progress-outer{
+    height:6px; background:#0a1a14; border-radius:3px; overflow:hidden; margin-top:10px;
+    border:1px solid var(--line); display:none;
+  }
+  .progress-outer.show{ display:block; }
+  .progress-inner{ height:100%; width:0%; background:linear-gradient(90deg,var(--green-dim),var(--green)); box-shadow:0 0 8px var(--green); transition:width 0.15s;}
+
+  .cardmeta{ display:flex; flex-wrap:wrap; gap:18px; margin-bottom:10px; font-size:0.85em;}
+  .cardmeta span.k{ color:var(--text-dim); }
+  .cardmeta span.v{ color:var(--cyan); }
+
+  .fmt-toggle{ display:flex; gap:6px; margin-bottom:10px;}
+  .fmt-toggle button{ padding:6px 12px; font-size:0.78em; }
+  .fmt-toggle button.active{ background:rgba(77,227,255,0.12); color:var(--cyan); border-color:var(--cyan); }
+
+  table{ width:100%; border-collapse:collapse; font-size:0.78em; }
+  th,td{ padding:5px 7px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap; }
+  th{ color:var(--text-dim); font-weight:normal; letter-spacing:1px; }
+  td.hexcol{ font-family:inherit; letter-spacing:0.5px; }
+  tr.trailer td{ color:var(--amber); }
+  tr.noauth td{ color:#4a4a4a; font-style:italic; }
+  tr.blockzero td{ color:var(--cyan); }
+  td.databox{ max-width:340px; overflow-x:auto; }
+
+  .writeform{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  .writeform input[type=number], .writeform input[type=text]{
+    background:#040807; border:1px solid var(--line); color:var(--text);
+    font-family:inherit; padding:8px 10px; border-radius:4px; font-size:0.85em;
+  }
+  .writeform input[type=number]{ width:80px; }
+  .writeform input[type=text]{ width:260px; letter-spacing:1px; }
+  .hint{ color:var(--text-dim); font-size:0.75em; margin-top:6px; }
+
+  footer{ text-align:center; color:var(--text-dim); font-size:0.72em; letter-spacing:1px; margin-top:8px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>RFID // FORGE</h1>
+    <div class="sub">univerzalni <span class="accent">MIFARE</span> reader &middot; writer &middot; cloner</div>
+  </header>
+
+  <div class="statusbar">
+    <div class="dot" id="wsDot"></div>
+    <span id="wsLabel">pripojovani...</span>
+  </div>
+
+  <div class="panel" data-tag="prikazy">
+    <div class="btnrow">
+      <button id="btnRead">&#9673; PRECIST KARTU</button>
+      <button id="btnClone">&#8635; KLONOVAT NA CILOVOU</button>
+      <button id="btnFormat" class="danger">&#8635; FORMATOVAT (tovarni)</button>
+      <button id="btnCancel" class="ghost">&#10005; ZRUSIT</button>
+    </div>
+    <label class="check">
+      <input type="checkbox" id="chkOverwriteUid">
+      Prepsat i UID (blok 0) — pouze na "magic" / Gen1A prazdnych kartach
+    </label>
+    <div class="progress-outer" id="progOuter"><div class="progress-inner" id="progInner"></div></div>
+  </div>
+
+  <div class="panel" data-tag="terminal">
+    <div class="terminal" id="terminal"></div>
+  </div>
+
+  <div class="panel" data-tag="data karty" id="dataPanel" style="display:none;">
+    <div class="cardmeta">
+      <span><span class="k">UID:</span> <span class="v" id="metaUid">-</span></span>
+      <span><span class="k">Typ:</span> <span class="v" id="metaType">-</span></span>
+    </div>
+    <div class="fmt-toggle">
+      <button data-fmt="hex" class="active">HEX</button>
+      <button data-fmt="dec">DEC</button>
+      <button data-fmt="ascii">ASCII</button>
+      <button data-fmt="bin">BIN</button>
+    </div>
+    <div style="overflow-x:auto;">
+      <table>
+        <thead><tr><th>blok</th><th>sektor</th><th>typ</th><th class="databox">data</th></tr></thead>
+        <tbody id="dataBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel" data-tag="vytvorit / prepsat blok">
+    <div class="writeform">
+      <span>blok #</span>
+      <input type="number" id="wBlock" min="1" max="63" value="1">
+      <span>data (32 hex znaku)</span>
+      <input type="text" id="wHex" maxlength="32" placeholder="00112233445566778899AABBCCDDEEFF">
+      <button id="btnWriteBlock">ZAPSAT BLOK</button>
+    </div>
+    <div class="hint">Blok 0 a trailery (3, 7, 11, ...) nelze takto prepsat — trailer se resetuje pomoci FORMATOVAT.</div>
+  </div>
+
+  <footer>RFID-FORGE &middot; WiFi AP + mDNS &middot; http://rfid.local</footer>
+</div>
+
+<script>
+let ws;
+let currentFmt = 'hex';
+let lastBlocks = [];
+
+const term = document.getElementById('terminal');
+const wsDot = document.getElementById('wsDot');
+const wsLabel = document.getElementById('wsLabel');
+const progOuter = document.getElementById('progOuter');
+const progInner = document.getElementById('progInner');
+const dataPanel = document.getElementById('dataPanel');
+const dataBody = document.getElementById('dataBody');
+
+function ts() {
+  const d = new Date();
+  return '[' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0') + ':' + String(d.getSeconds()).padStart(2,'0') + ']';
+}
+
+function log(msg, cls) {
+  const div = document.createElement('div');
+  div.className = 'line ' + (cls || 't-status');
+  div.innerHTML = '<span class="ts">' + ts() + '</span>' + msg;
+  term.appendChild(div);
+  term.scrollTop = term.scrollHeight;
+}
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  ws = new WebSocket(proto + location.host + '/ws');
+
+  ws.onopen = () => { wsDot.classList.add('on'); wsLabel.textContent = 'pripojeno'; };
+  ws.onclose = () => { wsDot.classList.remove('on'); wsLabel.textContent = 'odpojeno - obnovuji...'; setTimeout(connect, 1500); };
+  ws.onerror = () => { ws.close(); };
+
+  ws.onmessage = (evt) => {
+    let m;
+    try { m = JSON.parse(evt.data); } catch(e) { return; }
+
+    if (m.event === 'status') {
+      log(m.msg, 't-status');
+    } else if (m.event === 'error') {
+      log(m.msg, 't-error');
+    } else if (m.event === 'dump') {
+      log('Karta precrena — UID ' + m.uid + ' (' + m.type + ')', 't-ok');
+      document.getElementById('metaUid').textContent = m.uid;
+      document.getElementById('metaType').textContent = m.type;
+      lastBlocks = m.blocks;
+      renderTable();
+      dataPanel.style.display = 'block';
+    } else if (m.event === 'progress') {
+      progOuter.classList.add('show');
+      const pct = Math.round((m.block / m.total) * 100);
+      progInner.style.width = pct + '%';
+      log('Zapis bloku ' + m.block + ' / ' + m.total, 't-info');
+    } else if (m.event === 'done') {
+      progOuter.classList.remove('show');
+      progInner.style.width = '0%';
+      if (m.action === 'read') log('Cteni dokonceno.', 't-ok');
+      if (m.action === 'write') log(m.ok ? ('Blok ' + m.block + ' zapsan.') : ('Zapis bloku ' + m.block + ' selhal.'), m.ok ? 't-ok':'t-error');
+      if (m.action === 'clone') log('Klonovani hotovo — zapsano:' + m.written + ' chyba:' + m.failed + ' preskoceno:' + m.skipped, m.failed ? 't-error':'t-ok');
+      if (m.action === 'format') log('Formatovani hotovo — ok:' + m.written + ' chyba:' + m.failed, m.failed ? 't-error':'t-ok');
+    }
+  };
+}
+connect();
+
+function send(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+  else log('Neni spojeni se zarizenim.', 't-error');
+}
+
+document.getElementById('btnRead').onclick = () => send({cmd:'read'});
+document.getElementById('btnCancel').onclick = () => send({cmd:'cancel'});
+document.getElementById('btnFormat').onclick = () => {
+  if (confirm('Opravdu formatovat kartu na tovarni nastaveni? Data budou ztracena.')) send({cmd:'format'});
+};
+document.getElementById('btnClone').onclick = () => {
+  const overwrite = document.getElementById('chkOverwriteUid').checked;
+  if (overwrite && !confirm('Prepsat UID (blok 0) funguje jen na specialnich "magic" kartach. Pokracovat?')) return;
+  send({cmd:'clone_write', overwrite_uid: overwrite});
+};
+document.getElementById('btnWriteBlock').onclick = () => {
+  const block = parseInt(document.getElementById('wBlock').value, 10);
+  const hex = document.getElementById('wHex').value.trim().toUpperCase();
+  if (!/^[0-9A-F]{32}$/.test(hex)) { log('Data musi byt presne 32 hex znaku (16 bajtu).', 't-error'); return; }
+  send({cmd:'write_block', block: block, hex: hex});
+};
+
+// ---- format prekladac (HEX / DEC / ASCII / BIN) ----
+document.querySelectorAll('.fmt-toggle button').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.fmt-toggle button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentFmt = btn.dataset.fmt;
+    renderTable();
+  };
+});
+
+function convert(hex, fmt) {
+  if (!hex) return '-';
+  const bytes = [];
+  for (let i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.substr(i,2), 16));
+
+  if (fmt === 'hex') return bytes.map(b => b.toString(16).padStart(2,'0').toUpperCase()).join(' ');
+  if (fmt === 'dec') return bytes.map(b => String(b).padStart(3,'0')).join(' ');
+  if (fmt === 'bin') return bytes.map(b => b.toString(2).padStart(8,'0')).join(' ');
+  if (fmt === 'ascii') return bytes.map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.').join('');
+  return hex;
+}
+
+function renderTable() {
+  dataBody.innerHTML = '';
+  lastBlocks.forEach(b => {
+    const tr = document.createElement('tr');
+    if (b.trailer) tr.classList.add('trailer');
+    if (b.idx === 0) tr.classList.add('blockzero');
+    if (!b.auth) tr.classList.add('noauth');
+
+    const typeLabel = b.idx === 0 ? 'UID/vyrobce' : (b.trailer ? 'trailer (klice)' : 'data');
+    const dataLabel = !b.auth ? 'neautorizovano' : (b.error ? 'chyba cteni' : convert(b.hex, currentFmt));
+
+    tr.innerHTML = '<td>' + b.idx + '</td><td>' + b.sector + '</td><td>' + typeLabel + '</td><td class="hexcol databox">' + dataLabel + '</td>';
+    dataBody.appendChild(tr);
+  });
+}
+
+log('Terminal pripraven. Ceka se na spojeni se zarizenim...', 't-info');
+</script>
+</body>
+</html>
