@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="cs">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RFID // FORGE</title>
 <style>
-  /* Zadne externi fonty/CDN - zarizeni bezi jako izolovany hotspot bez internetu */
+  /* No external fonts/CDNs - device runs as an isolated hotspot without internet */
   :root{
     --bg: #060a08;
     --panel: #0c1512;
@@ -143,24 +143,24 @@
 
   <header>
     <h1>RFID // FORGE</h1>
-    <div class="sub">univerzalni <span class="accent">MIFARE</span> reader &middot; writer &middot; cloner</div>
+    <div class="sub">universal <span class="accent">MIFARE</span> reader &middot; writer &middot; cloner</div>
   </header>
 
   <div class="statusbar">
     <div class="dot" id="wsDot"></div>
-    <span id="wsLabel">pripojovani...</span>
+    <span id="wsLabel">connecting...</span>
   </div>
 
-  <div class="panel" data-tag="prikazy">
+  <div class="panel" data-tag="commands">
     <div class="btnrow">
-      <button id="btnRead">&#9673; PRECIST KARTU</button>
-      <button id="btnClone">&#8635; KLONOVAT NA CILOVOU</button>
-      <button id="btnFormat" class="danger">&#8635; FORMATOVAT (tovarni)</button>
-      <button id="btnCancel" class="ghost">&#10005; ZRUSIT</button>
+      <button id="btnRead">&#9673; READ CARD</button>
+      <button id="btnClone">&#8635; CLONE TO TARGET</button>
+      <button id="btnFormat" class="danger">&#8635; FORMAT (factory)</button>
+      <button id="btnCancel" class="ghost">&#10005; CANCEL</button>
     </div>
     <label class="check">
       <input type="checkbox" id="chkOverwriteUid">
-      Prepsat i UID (blok 0) — pouze na "magic" / Gen1A prazdnych kartach
+      Overwrite UID (block 0) — only on "magic" / Gen1A blank cards
     </label>
     <div class="progress-outer" id="progOuter"><div class="progress-inner" id="progInner"></div></div>
   </div>
@@ -169,10 +169,10 @@
     <div class="terminal" id="terminal"></div>
   </div>
 
-  <div class="panel" data-tag="data karty" id="dataPanel" style="display:none;">
+  <div class="panel" data-tag="card data" id="dataPanel" style="display:none;">
     <div class="cardmeta">
       <span><span class="k">UID:</span> <span class="v" id="metaUid">-</span></span>
-      <span><span class="k">Typ:</span> <span class="v" id="metaType">-</span></span>
+      <span><span class="k">Type:</span> <span class="v" id="metaType">-</span></span>
     </div>
     <div class="fmt-toggle">
       <button data-fmt="hex" class="active">HEX</button>
@@ -182,21 +182,21 @@
     </div>
     <div style="overflow-x:auto;">
       <table>
-        <thead><tr><th>blok</th><th>sektor</th><th>typ</th><th class="databox">data</th></tr></thead>
+        <thead><tr><th>block</th><th>sector</th><th>type</th><th class="databox">data</th></tr></thead>
         <tbody id="dataBody"></tbody>
       </table>
     </div>
   </div>
 
-  <div class="panel" data-tag="vytvorit / prepsat blok">
+  <div class="panel" data-tag="create / overwrite block">
     <div class="writeform">
-      <span>blok #</span>
+      <span>block #</span>
       <input type="number" id="wBlock" min="1" max="63" value="1">
-      <span>data (32 hex znaku)</span>
+      <span>data (32 hex chars)</span>
       <input type="text" id="wHex" maxlength="32" placeholder="00112233445566778899AABBCCDDEEFF">
-      <button id="btnWriteBlock">ZAPSAT BLOK</button>
+      <button id="btnWriteBlock">WRITE BLOCK</button>
     </div>
-    <div class="hint">Blok 0 a trailery (3, 7, 11, ...) nelze takto prepsat — trailer se resetuje pomoci FORMATOVAT.</div>
+    <div class="hint">Block 0 and trailers (3, 7, 11, ...) cannot be overwritten this way — trailers are reset using FORMAT.</div>
   </div>
 
   <footer>RFID-FORGE &middot; WiFi AP + mDNS &middot; http://rfid.local</footer>
@@ -232,8 +232,8 @@ function connect() {
   const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
   ws = new WebSocket(proto + location.host + '/ws');
 
-  ws.onopen = () => { wsDot.classList.add('on'); wsLabel.textContent = 'pripojeno'; };
-  ws.onclose = () => { wsDot.classList.remove('on'); wsLabel.textContent = 'odpojeno - obnovuji...'; setTimeout(connect, 1500); };
+  ws.onopen = () => { wsDot.classList.add('on'); wsLabel.textContent = 'connected'; };
+  ws.onclose = () => { wsDot.classList.remove('on'); wsLabel.textContent = 'disconnected - reconnecting...'; setTimeout(connect, 1500); };
   ws.onerror = () => { ws.close(); };
 
   ws.onmessage = (evt) => {
@@ -245,7 +245,7 @@ function connect() {
     } else if (m.event === 'error') {
       log(m.msg, 't-error');
     } else if (m.event === 'dump') {
-      log('Karta precrena — UID ' + m.uid + ' (' + m.type + ')', 't-ok');
+      log('Card read — UID ' + m.uid + ' (' + m.type + ')', 't-ok');
       document.getElementById('metaUid').textContent = m.uid;
       document.getElementById('metaType').textContent = m.type;
       lastBlocks = m.blocks;
@@ -255,14 +255,14 @@ function connect() {
       progOuter.classList.add('show');
       const pct = Math.round((m.block / m.total) * 100);
       progInner.style.width = pct + '%';
-      log('Zapis bloku ' + m.block + ' / ' + m.total, 't-info');
+      log('Writing block ' + m.block + ' / ' + m.total, 't-info');
     } else if (m.event === 'done') {
       progOuter.classList.remove('show');
       progInner.style.width = '0%';
-      if (m.action === 'read') log('Cteni dokonceno.', 't-ok');
-      if (m.action === 'write') log(m.ok ? ('Blok ' + m.block + ' zapsan.') : ('Zapis bloku ' + m.block + ' selhal.'), m.ok ? 't-ok':'t-error');
-      if (m.action === 'clone') log('Klonovani hotovo — zapsano:' + m.written + ' chyba:' + m.failed + ' preskoceno:' + m.skipped, m.failed ? 't-error':'t-ok');
-      if (m.action === 'format') log('Formatovani hotovo — ok:' + m.written + ' chyba:' + m.failed, m.failed ? 't-error':'t-ok');
+      if (m.action === 'read') log('Read complete.', 't-ok');
+      if (m.action === 'write') log(m.ok ? ('Block ' + m.block + ' written.') : ('Writing block ' + m.block + ' failed.'), m.ok ? 't-ok':'t-error');
+      if (m.action === 'clone') log('Cloning finished — written:' + m.written + ' failed:' + m.failed + ' skipped:' + m.skipped, m.failed ? 't-error':'t-ok');
+      if (m.action === 'format') log('Formatting finished — ok:' + m.written + ' failed:' + m.failed, m.failed ? 't-error':'t-ok');
     }
   };
 }
@@ -270,27 +270,27 @@ connect();
 
 function send(obj) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
-  else log('Neni spojeni se zarizenim.', 't-error');
+  else log('No connection to device.', 't-error');
 }
 
 document.getElementById('btnRead').onclick = () => send({cmd:'read'});
 document.getElementById('btnCancel').onclick = () => send({cmd:'cancel'});
 document.getElementById('btnFormat').onclick = () => {
-  if (confirm('Opravdu formatovat kartu na tovarni nastaveni? Data budou ztracena.')) send({cmd:'format'});
+  if (confirm('Really format card to factory settings? Data will be lost.')) send({cmd:'format'});
 };
 document.getElementById('btnClone').onclick = () => {
   const overwrite = document.getElementById('chkOverwriteUid').checked;
-  if (overwrite && !confirm('Prepsat UID (blok 0) funguje jen na specialnich "magic" kartach. Pokracovat?')) return;
+  if (overwrite && !confirm('Overwriting UID (block 0) only works on special "magic" cards. Continue?')) return;
   send({cmd:'clone_write', overwrite_uid: overwrite});
 };
 document.getElementById('btnWriteBlock').onclick = () => {
   const block = parseInt(document.getElementById('wBlock').value, 10);
   const hex = document.getElementById('wHex').value.trim().toUpperCase();
-  if (!/^[0-9A-F]{32}$/.test(hex)) { log('Data musi byt presne 32 hex znaku (16 bajtu).', 't-error'); return; }
+  if (!/^[0-9A-F]{32}$/.test(hex)) { log('Data must be exactly 32 hex characters (16 bytes).', 't-error'); return; }
   send({cmd:'write_block', block: block, hex: hex});
 };
 
-// ---- format prekladac (HEX / DEC / ASCII / BIN) ----
+// ---- format translator (HEX / DEC / ASCII / BIN) ----
 document.querySelectorAll('.fmt-toggle button').forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll('.fmt-toggle button').forEach(b => b.classList.remove('active'));
@@ -320,15 +320,15 @@ function renderTable() {
     if (b.idx === 0) tr.classList.add('blockzero');
     if (!b.auth) tr.classList.add('noauth');
 
-    const typeLabel = b.idx === 0 ? 'UID/vyrobce' : (b.trailer ? 'trailer (klice)' : 'data');
-    const dataLabel = !b.auth ? 'neautorizovano' : (b.error ? 'chyba cteni' : convert(b.hex, currentFmt));
+    const typeLabel = b.idx === 0 ? 'UID/manufacturer' : (b.trailer ? 'trailer (keys)' : 'data');
+    const dataLabel = !b.auth ? 'unauthorized' : (b.error ? 'read error' : convert(b.hex, currentFmt));
 
     tr.innerHTML = '<td>' + b.idx + '</td><td>' + b.sector + '</td><td>' + typeLabel + '</td><td class="hexcol databox">' + dataLabel + '</td>';
     dataBody.appendChild(tr);
   });
 }
 
-log('Terminal pripraven. Ceka se na spojeni se zarizenim...', 't-info');
+log('Terminal ready. Waiting for connection to device...', 't-info');
 </script>
 </body>
 </html>
