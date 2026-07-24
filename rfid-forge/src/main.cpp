@@ -1,21 +1,21 @@
 /* ============================================================
  *  RFID-FORGE
- *  Univerzalni cteni / zapis / klonovani MIFARE Classic karet
- *  ESP32 (NodeMCU-32S) + MFRC522, ovladano pres web (WiFi AP + mDNS)
+ *  Universal reading / writing / cloning of MIFARE Classic cards
+ *  ESP32 (NodeMCU-32S) + MFRC522, web-controlled (WiFi AP + mDNS)
  *
- *  Pripojeni k RC522 (VSPI, viz README pro tabulku pinu):
+ *  RC522 connections (VSPI, see README for pinout table):
  *    SDA/SS -> GPIO 5      SCK  -> GPIO 18
  *    MOSI   -> GPIO 23     MISO -> GPIO 19
- *    RST    -> GPIO 22     3V3  -> 3.3V (NIKDY 5V!)   GND -> GND
+ *    RST    -> GPIO 22     3V3  -> 3.3V (NEVER 5V!)   GND -> GND
  *
- *  ESP32 se pripoji k TVE domaci WiFi (vyplň WIFI_SSID / WIFI_PASSWORD
- *  nize). Po pripojeni otevri http://rfid.local, nebo IP adresu,
- *  kterou vypise seriovy monitor (115200 baud).
+ *  The ESP32 connects to YOUR home WiFi (fill in WIFI_SSID / WIFI_PASSWORD
+ *  below). Once connected, open http://rfid.local or the IP address
+ *  displayed on the serial monitor (115200 baud).
  *
- *  Pokud se pripojeni k domaci WiFi nepovede do 15s, zarizeni samo
- *  spusti zalozni hotspot "RFID-FORGE-SETUP" (heslo clone1234), aby
- *  slo dostupne i bez funkcni domaci site - pripoj se na nej a otevri
- *  http://192.168.4.1 pro diagnostiku.
+ *  If connection to home WiFi fails within 15s, the device automatically
+ *  starts a fallback hotspot "RFID-FORGE-SETUP" (password clone1234) so it
+ *  remains accessible without a working home network — connect to it and
+ *  open http://192.168.4.1 for diagnostics.
  * ============================================================ */
 
 #include <Arduino.h>
@@ -34,13 +34,13 @@
 
 // ---------------- WiFi ----------------
 // !!! VYPLN SVOJI DOMACI WIFI !!!
-const char* WIFI_SSID     = "TVOJE_WIFI_JMENO";
-const char* WIFI_PASSWORD = "TVOJE_WIFI_HESLO";
+const char* WIFI_SSID     = "YOUR_WIFI_SSID";
+const char* WIFI_PASSWORD = "YOUR_WIFI_PASS";
 
-// Zalozni hotspot, ktery se sam spusti, pokud se STA pripojeni nepovede
-// do WIFI_CONNECT_TIMEOUT_MS (napr. spatne heslo, WiFi mimo dosah...).
-const char* AP_SSID     = "RFID-FORGE-SETUP";
-const char* AP_PASSWORD = "clone1234";        // min. 8 znaku (WPA2)
+// Fallback hotspot that automatically starts if the STA connection fails
+// within WIFI_CONNECT_TIMEOUT_MS (e.g., wrong password, WiFi out of range...)
+const char* AP_SSID     = "RFID-FORGE";
+const char* AP_PASSWORD = "clone1234";        // min. 8 char (WPA2)
 const unsigned long WIFI_CONNECT_TIMEOUT_MS = 15000;
 
 const char* MDNS_NAME   = "rfid";             // http://rfid.local
@@ -51,7 +51,7 @@ MFRC522::MIFARE_Key masterKey;
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 
-// Nejcastejsi tovarni / verejne zname klice pro MIFARE Classic
+// Most common factory / publicly known keys for MIFARE Classic
 const byte KNOWN_KEYS[][6] = {
   {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF},
   {0xA0,0xA1,0xA2,0xA3,0xA4,0xA5},
@@ -63,7 +63,7 @@ const byte KNOWN_KEYS[][6] = {
 };
 const int KNOWN_KEYS_COUNT = sizeof(KNOWN_KEYS) / sizeof(KNOWN_KEYS[0]);
 
-// ---------------- Stavovy automat ----------------
+// ---------------- State machine ----------------
 enum Mode { IDLE, WAIT_READ, WAIT_WRITE_BLOCK, WAIT_CLONE_WRITE, WAIT_FORMAT };
 volatile Mode mode = IDLE;
 
@@ -71,15 +71,13 @@ bool pendingOverwriteUID = false;
 int  pendingBlock = -1;
 byte pendingData[16];
 
-// Ulozeny dump karty - MIFARE 1K = 16 sektoru * 4 bloky = 64 bloku po 16B
-// (u 4K karet se v teto verzi zpracuje jen prvnich 16 sektoru / 64 bloku)
 #define TOTAL_BLOCKS 64
 byte dump[TOTAL_BLOCKS][16];
 bool dumpValid[TOTAL_BLOCKS];
 bool haveDump = false;
 String dumpUID = "";
 
-// ---------------- Pomocne funkce ----------------
+// ---------------- Helpfull functions ----------------
 
 String bytesToHex(byte *buf, byte len) {
   String s;
@@ -133,7 +131,7 @@ byte sectorCountFor(MFRC522::PICC_Type type) {
     case MFRC522::PICC_TYPE_MIFARE_4K:   s = 40; break;
     default: s = 16; break;
   }
-  if (s > 16) s = 16; // v1: pracujeme jen s prvnimi 16 sektory (64 bloku)
+  if (s > 16) s = 16;
   return s;
 }
 
@@ -160,9 +158,9 @@ bool writeBlockRaw(byte blockAddr, byte *data16) {
   return status == MFRC522::STATUS_OK;
 }
 
-// Odemykaci sekvence pro "magic" Gen1A karty (specialni prazdne karty
-// urcene vyrobcem primo pro prepis UID / klonovani). Na normalne
-// zabezpecenych kartach tento prikaz nema zadny efekt.
+// Unlock sequence for "magic" Gen1A cards (special blank cards
+// designed by the manufacturer specifically for UID overwriting / cloning).
+// This command has no effect on normally secured cards.
 bool mfrc522OpenBackdoor() {
   byte cmd = 0x40;
   byte validBits = 7;
@@ -177,7 +175,7 @@ bool mfrc522OpenBackdoor() {
   return true;
 }
 
-// ---------------- Hlavni akce ----------------
+// ---------------- Main functions ----------------
 
 void doReadDump() {
   memset(dumpValid, 0, sizeof(dumpValid));
@@ -245,7 +243,7 @@ void doWriteCustomBlock(int blockAddr, byte *data16) {
   byte usedKey;
   byte trailerBlock = (blockAddr / 4) * 4 + 3;
   if (!authenticateBlock(trailerBlock, usedKey)) {
-    sendError("Autentizace sektoru selhala (blok " + String(blockAddr) + ").");
+    sendError("Sector authentication failed (block " + String(blockAddr) + ").");
     return;
   }
   bool ok = writeBlockRaw(blockAddr, data16);
@@ -263,17 +261,17 @@ void doWriteCustomBlock(int blockAddr, byte *data16) {
 
 void doCloneWrite(bool overwriteUID) {
   if (!haveDump) {
-    sendError("Neni ulozeny zadny dump. Nejdriv over 'Precist kartu'.");
+    sendError("No dump saved. Run 'Read card' first.");
     return;
   }
 
   if (overwriteUID) {
-    sendStatus("Odemykam blok 0 (predpoklad: magic/UID karta)...");
+    sendStatus("Unlocking block 0 (assumption: magic/UID card)...");
     mfrc522OpenBackdoor();
     if (dumpValid[0]) {
       bool ok = writeBlockRaw(0, dump[0]);
-      sendStatus(ok ? "Blok 0 (UID) zapsan."
-                    : "Zapis bloku 0 selhal - karta pravdepodobne neni typu 'magic'.");
+      sendStatus(ok ? "Blok 0 (UID) written."
+                    : "Writing block 0 failed - the card is probably not a 'magic' type.");
     }
   }
 
@@ -316,9 +314,9 @@ void doCloneWrite(bool overwriteUID) {
 void doFormatCard() {
   const byte emptyBlock[16] = {0};
   const byte defaultTrailer[16] = {
-    0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,   // Key A (tovarni)
-    0xFF,0x07,0x80,0x69,             // Access bits (tovarni)
-    0xFF,0xFF,0xFF,0xFF,0xFF,0xFF    // Key B (tovarni)
+    0xFF,0xFF,0xFF,0xFF,0xFF,0xFF, 
+    0xFF,0x07,0x80,0x69,
+    0xFF,0xFF,0xFF,0xFF,0xFF,0xFF
   };
 
   MFRC522::PICC_Type piccType = mfrc522.PICC_GetType(mfrc522.uid.sak);
@@ -331,7 +329,7 @@ void doFormatCard() {
     if (!authenticateBlock(trailerBlock, usedKey)) { failCount++; continue; }
 
     for (byte b = 0; b < 3; b++) {
-      if (s == 0 && b == 0) continue; // blok 0 (vyrobni) se nikdy neprepisuje
+      if (s == 0 && b == 0) continue;
       byte blockAddr = blockAddrForSectorBlock(s, b);
       if (writeBlockRaw(blockAddr, (byte*)emptyBlock)) okCount++; else failCount++;
     }
@@ -355,40 +353,40 @@ void doFormatCard() {
 void handleWsMessage(uint8_t *data, size_t len) {
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, data, len);
-  if (err) { sendError("Neplatny JSON prikaz."); return; }
+  if (err) { sendError("Error JSON"); return; }
 
   String cmd = doc["cmd"] | "";
 
   if (cmd == "read") {
     mode = WAIT_READ;
-    sendStatus("Priloz kartu ke cteni...");
+    sendStatus("Tap the card to read...");
   } else if (cmd == "write_block") {
     pendingBlock = doc["block"] | -1;
     String hex = doc["hex"] | "";
     if (pendingBlock <= 0 || pendingBlock % 4 == 3 || pendingBlock >= TOTAL_BLOCKS || hex.length() != 32) {
-      sendError("Neplatny blok/data. (16 bajtu = 32 hex znaku; blok 0 a trailery [3,7,11,...] takto zapsat nelze.)");
+      sendError("Invalid block/data. (16 bytes = 32 hex characters; block 0 and trailers [3,7,11,...] cannot be written this way.)");
       return;
     }
     hexToBytes(hex, pendingData, 16);
     mode = WAIT_WRITE_BLOCK;
-    sendStatus("Priloz kartu k zapisu bloku " + String(pendingBlock) + "...");
+    sendStatus("Tap the card to write the block " + String(pendingBlock) + "...");
   } else if (cmd == "clone_write") {
     pendingOverwriteUID = doc["overwrite_uid"] | false;
     mode = WAIT_CLONE_WRITE;
-    sendStatus("Priloz cilovou kartu ke klonovani...");
+    sendStatus("Tap the card to copy");
   } else if (cmd == "format") {
     mode = WAIT_FORMAT;
-    sendStatus("Priloz kartu k formatovani na tovarni nastaveni...");
+    sendStatus("Tap the card to format it to factory settings...");
   } else if (cmd == "cancel") {
     mode = IDLE;
-    sendStatus("Zruseno. Cekam na dalsi prikaz.");
+    sendStatus("Deactivated. Waiting for another task");
   }
 }
 
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
                AwsEventType type, void *arg, uint8_t *data, size_t len) {
   if (type == WS_EVT_CONNECT) {
-    sendStatus("Terminal pripojen k RFID-FORGE.");
+    sendStatus("Terminal connected to RFID-FORGE.");
   } else if (type == WS_EVT_DATA) {
     AwsFrameInfo *info = (AwsFrameInfo*) arg;
     if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
@@ -397,7 +395,7 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
   }
 }
 
-// ---------------- WiFi pripojeni ----------------
+// ---------------- WiFi connection ----------------
 
 bool connectHomeWifi() {
   WiFi.mode(WIFI_STA);
@@ -414,22 +412,22 @@ bool connectHomeWifi() {
   Serial.println();
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("Pripojeno! IP adresa: ");
+    Serial.print("Connected! IP address: ");
     Serial.println(WiFi.localIP());
     return true;
   }
 
-  Serial.println("Pripojeni k domaci WiFi selhalo (spatne jmeno/heslo, nebo mimo dosah).");
+  Serial.println("Joining to WiFi failed");
   return false;
 }
 
 void startFallbackAP() {
   WiFi.mode(WIFI_AP);
   WiFi.softAP(AP_SSID, AP_PASSWORD);
-  Serial.println("Spoustim zalozni hotspot:");
+  Serial.println("Running fallback hotspot:");
   Serial.print("  SSID: "); Serial.println(AP_SSID);
-  Serial.print("  Heslo: "); Serial.println(AP_PASSWORD);
-  Serial.print("  IP adresa: "); Serial.println(WiFi.softAPIP());
+  Serial.print("  Password: "); Serial.println(AP_PASSWORD);
+  Serial.print("  IP address: "); Serial.println(WiFi.softAPIP());
 }
 
 // ---------------- Setup / Loop ----------------
@@ -443,41 +441,38 @@ void setup() {
   mfrc522.PCD_Init();
 
   if (!LittleFS.begin(true)) {
-    Serial.println("LittleFS mount selhal! (nahral jsi filesystem image? -> pio run -t uploadfs)");
+    Serial.println("LittleFS mount fail! (did you install filesystem image? -> pio run -t uploadfs)");
   } else if (!LittleFS.exists("/index.html")) {
-    Serial.println("POZOR: /index.html na LittleFS neni! Spust 'pio run -t uploadfs' a restartuj.");
+    Serial.println("WARNING: /index.html on LittleFS lost! Play 'pio run -t uploadfs' and reboot.");
   } else {
-    Serial.println("LittleFS OK, index.html nalezen.");
+    Serial.println("LittleFS OK, index.html not found.");
   }
 
   bool connected = connectHomeWifi();
   if (!connected) startFallbackAP();
 
   if (MDNS.begin(MDNS_NAME)) {
-    Serial.println("mDNS bezi: http://" + String(MDNS_NAME) + ".local");
+    Serial.println("mDNS running: http://" + String(MDNS_NAME) + ".local");
     MDNS.addService("http", "tcp", 80);
   } else {
-    Serial.println("mDNS se nepodarilo spustit (pouzij IP adresu vyse).");
+    Serial.println("mDNS cant run (use IP instead).");
   }
 
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
 
-  // Explicitni root route (nezavisi na chovani ruznych verzi
-  // setDefaultFile - jistota, ze se stranka nacte i kdyby serveStatic
-  // default-file mechanika na dane verzi knihovny nefungovala).
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     if (LittleFS.exists("/index.html")) {
       request->send(LittleFS, "/index.html", "text/html");
     } else {
       request->send(500, "text/plain",
-        "index.html chybi na LittleFS - spust 'pio run -t uploadfs' a restartuj ESP32.");
+        "WARNING: /index.html on LittleFS lost! Play 'pio run -t uploadfs' and reboot.";
     }
   });
 
   server.serveStatic("/", LittleFS, "/");
   server.onNotFound([](AsyncWebServerRequest *request) {
-    request->send(404, "text/plain", "Nenalezeno");
+    request->send(404, "text/plain", "Not Found");
   });
 
   server.begin();
