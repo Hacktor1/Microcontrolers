@@ -1,5 +1,3 @@
-Tady je anglický překlad tvé dokumentace, se zachováním stejného formátování:
-
 # RFID-FORGE — Universal RFID Tool for ESP32
 
 Firmware for the **NodeMCU ESP-32S** + **RC522 (MFRC522)** reader, controlled via a web interface. The ESP32 creates its own WiFi hotspot and mDNS name, so you can connect to it directly with your phone/PC — no internet or home network required.
